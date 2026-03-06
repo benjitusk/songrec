@@ -326,10 +326,10 @@ export function useRecognition() {
 					// We have enough samples, process them
 					const totalLength = collectedSamplesRef.current.reduce((s, b) => s + b.length, 0);
 					const combined = new Float32Array(totalLength);
-					let bufOffset = 0;
+					let writePosition = 0;
 					for (const buf of collectedSamplesRef.current) {
-						combined.set(buf, bufOffset);
-						bufOffset += buf.length;
+						combined.set(buf, writePosition);
+						writePosition += buf.length;
 					}
 
 					// Reset for next recognition cycle

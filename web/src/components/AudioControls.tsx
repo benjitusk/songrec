@@ -163,10 +163,10 @@ export function AudioControls({
 
         {state.isListening && (
           <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-            <strong>How it works:</strong> The app listens for ~5 seconds, identifies the song, then
+            <strong>How it works:</strong>{' '}
             {state.karaokeMode
-              ? ' automatically starts listening again when the song ends.'
-              : ' stops. Enable Karaoke Mode to auto-listen continuously.'}
+              ? 'The app listens for ~5 seconds and identifies the song. In Karaoke Mode, it automatically starts listening again when the song ends.'
+              : 'The app listens for ~5 seconds, identifies the song, then stops. Enable Karaoke Mode to auto-listen continuously.'}
           </div>
         )}
       </CardContent>
