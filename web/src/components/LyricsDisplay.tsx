@@ -74,28 +74,35 @@ export function LyricsDisplay({ lyrics, lyricsStatus, songStartedAt }: LyricsDis
               ref={isCurrent ? currentRef : undefined}
               className={cn(
                 'transition-all duration-300 ease-in-out',
-                isCurrent && 'text-foreground font-bold',
-                !isCurrent && isPast && 'text-muted-foreground opacity-50',
-                !isCurrent && !isPast && 'text-muted-foreground opacity-75',
+                !isCurrent && isPast && 'opacity-50',
+                !isCurrent && !isPast && 'opacity-75',
               )}
             >
-              <p
-                className={cn(
-                  'leading-snug transition-all duration-300',
-                  isCurrent ? 'text-2xl sm:text-3xl' : 'text-lg sm:text-xl',
-                )}
-              >
-                {line.text}
-              </p>
-
-              {/* Progress bar — only shown for the active line */}
-              {isCurrent && (
-                <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary transition-none"
-                    style={{ width: `${progress * 100}%` }}
-                  />
-                </div>
+              {isCurrent ? (
+                /* Active line: text acts as a left-to-right fill mask */
+                <p
+                  className="leading-snug font-bold text-2xl sm:text-3xl select-none"
+                  style={{
+                    backgroundImage: `linear-gradient(
+                      to right,
+                      var(--color-primary) ${progress * 100}%,
+                      var(--color-foreground) ${progress * 100}%
+                    )`,
+                    WebkitBackgroundClip: 'text',
+                    backgroundClip: 'text',
+                    color: 'transparent',
+                  }}
+                >
+                  {line.text}
+                </p>
+              ) : (
+                <p
+                  className={cn(
+                    'leading-snug text-muted-foreground text-lg sm:text-xl',
+                  )}
+                >
+                  {line.text}
+                </p>
               )}
             </div>
           )

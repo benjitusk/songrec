@@ -157,13 +157,18 @@ export function useRecognition() {
 					return null;
 				}
 
+				// Record when the request is dispatched so network round-trip time
+				// is not counted against the song position calculation below.
+				const requestDispatchedAt = Date.now();
 				const result = await recognizeSongFromSignature(sig);
 
 				if (result.song) {
 					// Use Shazam's offset to calculate the true song start time.
-					// offset = how many seconds into the song recognition occurred.
+					// offset = how many seconds into the song the audio snippet came from.
+					// We anchor to requestDispatchedAt (not Date.now()) so the network
+					// round-trip latency doesn't shift lyrics ahead in time.
 					const offsetMs = (result.song.offset ?? 0) * 1000;
-					const songStartedAt = Date.now() - offsetMs;
+					const songStartedAt = requestDispatchedAt - offsetMs;
 
 					setState((prev) => ({
 						...prev,
