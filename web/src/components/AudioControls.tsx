@@ -1,14 +1,16 @@
 import { useRef } from 'react'
-import { Mic, MicOff, Upload, Loader2, Music2, AlertCircle } from 'lucide-react'
+import { Mic, MicOff, Upload, Loader2, Music2, AlertCircle, Tv2 } from 'lucide-react'
 import type { RecognitionState } from '@/hooks/useRecognition.ts'
 import { Button } from '@/components/ui/button.tsx'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card.tsx'
+import { Switch } from '@/components/ui/switch.tsx'
 
 interface AudioControlsProps {
   state: RecognitionState
   onStartListening: () => void
   onStopListening: () => void
   onFileSelect: (file: File) => void
+  onToggleKaraokeMode: () => void
 }
 
 function StatusIndicator({ status }: { status: RecognitionState['status'] }) {
@@ -56,6 +58,7 @@ export function AudioControls({
   onStartListening,
   onStopListening,
   onFileSelect,
+  onToggleKaraokeMode,
 }: AudioControlsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -141,10 +144,29 @@ export function AudioControls({
           )}
         </div>
 
+        {/* Karaoke mode toggle */}
+        <div className="flex items-center justify-between rounded-lg border p-3">
+          <div className="flex items-center gap-2">
+            <Tv2 className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <p className="text-sm font-medium leading-none">Karaoke Mode</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Auto-listen for the next song when this one ends
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={state.karaokeMode}
+            onCheckedChange={onToggleKaraokeMode}
+          />
+        </div>
+
         {state.isListening && (
           <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-            <strong>How it works:</strong> The app listens for ~5 seconds, identifies the song, then
-            listens again automatically. Make sure music is playing.
+            <strong>How it works:</strong>{' '}
+            {state.karaokeMode
+              ? 'The app listens for ~5 seconds and identifies the song. In Karaoke Mode, it automatically starts listening again when the song ends.'
+              : 'The app listens for ~5 seconds, identifies the song, then stops. Enable Karaoke Mode to auto-listen continuously.'}
           </div>
         )}
       </CardContent>

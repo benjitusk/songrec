@@ -2,10 +2,10 @@
  * React hook for audio recognition.
  * Handles microphone input, file input, and recognition state.
  */
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { SignatureGenerator } from '@/lib/fingerprinting/algorithm.ts';
-import { recognizeSongFromSignature } from '@/lib/communication.ts';
-import type { ShazamSong } from '@/lib/communication.ts';
+import { recognizeSongFromSignature, fetchLyrics } from '@/lib/communication.ts';
+import type { ShazamSong, LyricLine } from '@/lib/communication.ts';
 
 export interface SongHistoryEntry {
 	id: string;
@@ -21,12 +21,26 @@ export type RecognitionStatus =
 	| 'no_match'
 	| 'error';
 
+export type LyricsStatus = 'idle' | 'loading' | 'loaded' | 'unavailable';
+
 export interface RecognitionState {
 	status: RecognitionStatus;
 	currentSong: ShazamSong | null;
+	/** Time-synced lyrics fetched from LRCLIB after recognition */
+	lyrics: LyricLine[] | null;
+	lyricsStatus: LyricsStatus;
+	/** Song duration in ms (from LRCLIB) — used for karaoke auto-restart */
+	songDurationMs: number | null;
 	history: SongHistoryEntry[];
 	errorMessage: string | null;
 	isListening: boolean;
+	karaokeMode: boolean;
+	/**
+	 * Wall-clock timestamp (ms) representing when the song started playing.
+	 * Calculated as: Date.now() - (shazam_offset_seconds * 1000)
+	 * so that lyrics sync correctly to the actual playback position.
+	 */
+	songStartedAt: number | null;
 }
 
 // Downsample audio buffer from source sample rate to 16kHz
@@ -69,9 +83,14 @@ export function useRecognition() {
 	const [state, setState] = useState<RecognitionState>({
 		status: 'idle',
 		currentSong: null,
+		lyrics: null,
+		lyricsStatus: 'idle',
+		songDurationMs: null,
 		history: [],
 		errorMessage: null,
 		isListening: false,
+		karaokeMode: false,
+		songStartedAt: null,
 	});
 
 	const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -79,6 +98,11 @@ export function useRecognition() {
 	const workletNodeRef = useRef<AudioWorkletNode | null>(null);
 	const collectedSamplesRef = useRef<Float32Array[]>([]);
 	const listeningIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+	const karaokeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	// Refs used inside async callbacks to always see the latest values
+	const karaokeModeRef = useRef(false);
+	const startListeningRef = useRef<(() => Promise<void>) | null>(null);
 
 	const setStatus = useCallback((status: RecognitionStatus, extra?: Partial<RecognitionState>) => {
 		setState((prev) => ({ ...prev, status, errorMessage: null, ...extra }));
@@ -96,6 +120,27 @@ export function useRecognition() {
 		}));
 	}, []);
 
+	const toggleKaraokeMode = useCallback(() => {
+		setState((prev) => {
+			const next = !prev.karaokeMode;
+			karaokeModeRef.current = next;
+			return { ...prev, karaokeMode: next };
+		});
+	}, []);
+
+	const scheduleKaraokeRestart = useCallback(
+		(durationMs: number, offsetMs: number) => {
+			if (!karaokeModeRef.current) return;
+			const timeUntilEnd = Math.max(1000, durationMs - offsetMs);
+			karaokeTimerRef.current = setTimeout(() => {
+				if (karaokeModeRef.current) {
+					startListeningRef.current?.();
+				}
+			}, timeUntilEnd);
+		},
+		[],
+	);
+
 	const recognizeFromBuffer = useCallback(
 		async (samples: Float32Array) => {
 			try {
@@ -112,16 +157,56 @@ export function useRecognition() {
 					return null;
 				}
 
+				// Record when the request is dispatched so network round-trip time
+				// is not counted against the song position calculation below.
+				const requestDispatchedAt = Date.now();
 				const result = await recognizeSongFromSignature(sig);
 
 				if (result.song) {
+					// Use Shazam's offset to calculate the true song start time.
+					// offset = how many seconds into the song the audio snippet came from.
+					// We anchor to requestDispatchedAt (not Date.now()) so the network
+					// round-trip latency doesn't shift lyrics ahead in time.
+					const offsetMs = (result.song.offset ?? 0) * 1000;
+					const songStartedAt = requestDispatchedAt - offsetMs;
+
 					setState((prev) => ({
 						...prev,
 						status: 'success',
 						currentSong: result.song,
+						lyrics: null,
+						lyricsStatus: 'loading',
+						songDurationMs: null,
 						errorMessage: null,
+						songStartedAt,
 					}));
 					addToHistory(result.song);
+
+					// Fetch time-synced lyrics from LRCLIB asynchronously
+					fetchLyrics(result.song.title, result.song.subtitle)
+						.then((lyricsResult) => {
+							if (lyricsResult) {
+								setState((prev) => ({
+									...prev,
+									lyrics: lyricsResult.lyrics,
+									lyricsStatus: 'loaded',
+									songDurationMs: lyricsResult.durationMs ?? null,
+								}));
+								// Schedule karaoke restart based on real duration + position
+								if (lyricsResult.durationMs != null) {
+									scheduleKaraokeRestart(lyricsResult.durationMs, offsetMs);
+								}
+							} else {
+								setState((prev) => ({ ...prev, lyricsStatus: 'unavailable' }));
+								// Fallback karaoke restart: use a 4-minute timer
+								scheduleKaraokeRestart(4 * 60 * 1000, offsetMs);
+							}
+						})
+						.catch(() => {
+							setState((prev) => ({ ...prev, lyricsStatus: 'unavailable' }));
+							scheduleKaraokeRestart(4 * 60 * 1000, offsetMs);
+						});
+
 					return result.song;
 				} else {
 					setStatus('no_match');
@@ -137,7 +222,7 @@ export function useRecognition() {
 				return null;
 			}
 		},
-		[setStatus, addToHistory],
+		[setStatus, addToHistory, scheduleKaraokeRestart],
 	);
 
 	const recognizeFromFile = useCallback(
@@ -188,6 +273,10 @@ export function useRecognition() {
 	);
 
 	const stopListening = useCallback(() => {
+		if (karaokeTimerRef.current) {
+			clearTimeout(karaokeTimerRef.current);
+			karaokeTimerRef.current = null;
+		}
 		if (listeningIntervalRef.current) {
 			clearInterval(listeningIntervalRef.current);
 			listeningIntervalRef.current = null;
@@ -242,10 +331,10 @@ export function useRecognition() {
 					// We have enough samples, process them
 					const totalLength = collectedSamplesRef.current.reduce((s, b) => s + b.length, 0);
 					const combined = new Float32Array(totalLength);
-					let offset = 0;
+					let writePosition = 0;
 					for (const buf of collectedSamplesRef.current) {
-						combined.set(buf, offset);
-						offset += buf.length;
+						combined.set(buf, writePosition);
+						writePosition += buf.length;
 					}
 
 					// Reset for next recognition cycle
@@ -274,6 +363,11 @@ export function useRecognition() {
 		}
 	}, [recognizeFromBuffer, stopListening]);
 
+	// Keep startListeningRef in sync so karaoke timer can call the latest version
+	useEffect(() => {
+		startListeningRef.current = startListening;
+	}, [startListening]);
+
 	const clearHistory = useCallback(() => {
 		setState((prev) => ({ ...prev, history: [] }));
 	}, []);
@@ -284,5 +378,6 @@ export function useRecognition() {
 		stopListening,
 		recognizeFromFile,
 		clearHistory,
+		toggleKaraokeMode,
 	};
 }
