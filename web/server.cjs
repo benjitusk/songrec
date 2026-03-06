@@ -65,6 +65,38 @@ app.use('/api/shazam', (req, res) => {
 	proxyReq.end();
 });
 
+// Proxy all requests under /api/lrclib to lrclib.net (time-synced lyrics)
+app.use('/api/lrclib', (req, res) => {
+	console.log(`Proxying LRCLIB request: ${req.method} ${req.originalUrl}`);
+	const original = req.originalUrl || req.url;
+	const lrclibPath = original.startsWith('/api/lrclib')
+		? original.slice('/api/lrclib'.length)
+		: original;
+	const targetUrl = `https://lrclib.net${lrclibPath}`;
+
+	const options = {
+		method: req.method,
+		headers: {
+			'User-Agent': 'SongRec/1.0 (https://github.com/benjitusk/songrec)',
+		},
+	};
+
+	const proxyReq = https.request(targetUrl, options, (proxyRes) => {
+		res.status(proxyRes.statusCode);
+		if (proxyRes.headers['content-type']) {
+			res.setHeader('Content-Type', proxyRes.headers['content-type']);
+		}
+		proxyRes.pipe(res);
+	});
+
+	proxyReq.on('error', (err) => {
+		console.error('LRCLIB proxy error:', err.message);
+		res.status(502).json({ error: 'Proxy error: ' + err.message });
+	});
+
+	proxyReq.end();
+});
+
 app.get('/health', (_req, res) => {
 	res.json({ status: 'ok' });
 });
